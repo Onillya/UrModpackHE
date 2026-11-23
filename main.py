@@ -184,8 +184,8 @@ def main() -> None:
                 restored = restore_placeholders(translated, tokens)
                 translated_entries[key] = restored
                 cache[value] = restored
-            except Exception:
-                # Keep original string on failure without polluting the cache
+            except Exception as e:
+                print(f"  [!] Translation error on '{key}': {e}")
                 translated_entries[key] = value
 
         translated_files[target_path] = translated_entries
