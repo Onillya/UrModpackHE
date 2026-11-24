@@ -49,6 +49,27 @@ def get_pack_format(version: str) -> int:
     return 15
 
 
+def choose_translation_mode() -> bool:
+    """Prompt the user to choose between Hebrew-only or bilingual output."""
+    print("Choose translation mode:")
+    print("  [1] Hebrew only")
+    print("  [2] Hebrew + original name in parentheses")
+    while True:
+        choice = input("Enter 1 or 2: ").strip()
+        if choice == "1":
+            return False
+        if choice == "2":
+            return True
+        print("Invalid choice. Please enter 1 or 2.")
+
+
+def format_entry(translated: str, original: str, include_original: bool) -> str:
+    """Append the original string in parentheses when bilingual mode is enabled."""
+    if not include_original or translated.strip().lower() == original.strip().lower():
+        return translated
+    return f"{translated} ({original})"
+
+
 def load_cache() -> dict[str, str]:
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
@@ -131,12 +152,16 @@ def extract_lang_files(mods_dir: str, source_mc_lang: str) -> dict[str, dict[str
 
 
 def build_resource_pack(
-    translated_files: dict[str, dict[str, str]], output_zip: str, pack_format: int
+    translated_files: dict[str, dict[str, str]],
+    output_zip: str,
+    pack_format: int,
+    include_original: bool,
 ) -> None:
+    mode_label = "Hebrew + Original" if include_original else "Hebrew"
     pack_mcmeta = {
         "pack": {
             "pack_format": pack_format,
-            "description": f"Hebrew translation generated (MC {MC_VERSION})",
+            "description": f"{mode_label} translation (MC {MC_VERSION})",
         }
     }
 
@@ -149,10 +174,17 @@ def build_resource_pack(
 
 
 def main() -> None:
+    include_original = choose_translation_mode()
     pack_format = get_pack_format(MC_VERSION)
     api_source_lang = SOURCE_MC_LANG.split("_")[0]
 
-    print(f"[*] Config: MC {MC_VERSION} (format {pack_format}) | {SOURCE_MC_LANG} -> {MC_TARGET_LANG}")
+    output_zip = (
+        OUTPUT_ZIP.replace(".zip", "_bilingual.zip")
+        if include_original and OUTPUT_ZIP.endswith(".zip")
+        else OUTPUT_ZIP
+    )
+
+    print(f"\n[*] Config: MC {MC_VERSION} (format {pack_format}) | {SOURCE_MC_LANG} -> {MC_TARGET_LANG}")
 
     setup_local_translator(api_source_lang, API_TARGET_LANG)
     cache = load_cache()
@@ -173,25 +205,26 @@ def main() -> None:
                 continue
 
             if value in cache:
-                translated_entries[key] = cache[value]
-                continue
+                translated_text = cache[value]
+            else:
+                protected, tokens = protect_placeholders(value)
+                try:
+                    translated = argostranslate.translate.translate(
+                        protected, api_source_lang, API_TARGET_LANG
+                    )
+                    translated_text = restore_placeholders(translated, tokens)
+                    # Store pure translation in cache so mode 1 and mode 2 share it
+                    cache[value] = translated_text
+                except Exception:
+                    translated_entries[key] = value
+                    continue
 
-            protected, tokens = protect_placeholders(value)
-            try:
-                translated = argostranslate.translate.translate(
-                    protected, api_source_lang, API_TARGET_LANG
-                )
-                restored = restore_placeholders(translated, tokens)
-                translated_entries[key] = restored
-                cache[value] = restored
-            except Exception as e:
-                print(f"  [!] Translation error on '{key}': {e}")
-                translated_entries[key] = value
+            translated_entries[key] = format_entry(translated_text, value, include_original)
 
         translated_files[target_path] = translated_entries
         save_cache(cache)
 
-    build_resource_pack(translated_files, OUTPUT_ZIP, pack_format)
+    build_resource_pack(translated_files, output_zip, pack_format, include_original)
 
 
 if __name__ == "__main__":
